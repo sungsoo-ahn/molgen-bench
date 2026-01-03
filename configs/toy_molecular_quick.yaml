@@ -1,0 +1,55 @@
+# Quick configuration for 3D toy molecular model - for fast testing
+# Smaller dataset and fewer epochs for rapid iteration
+
+# Output directory
+output_dir: data/toy_molecular_quick
+
+# WandB configuration
+wandb:
+  enabled: false  # Disable for quick tests
+  project: molgen-bench
+  entity: null
+  name: null
+  tags: [toy_molecular, flow_matching, quick]
+
+# Data
+data:
+  dataset_type: toy_molecular
+  shape_type: circle  # 2D: circle, star, grid | 3D: sphere, cube, spiral, cluster, tetrahedron | mixed
+  num_samples: 200  # Small dataset
+  num_atoms_range: [10, 20]
+  noise: 0.02
+  scale: 1.0
+  batch_size: 32
+  num_workers: 2
+
+# Model
+architecture:
+  type: gnn
+  hidden_dim: 64  # Smaller model
+  num_layers: 3
+  dropout: 0.0
+  activation: silu
+  readout: sum
+
+generative:
+  type: flow_matching
+  time_steps: 50  # Fewer steps
+  sigma_min: 0.001
+  sigma_max: 1.0
+  schedule: cosine
+  loss_type: mse
+
+# Training
+training:
+  epochs: 20  # Fewer epochs
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  gradient_clip: 1.0
+
+  log_interval: 5
+  visualize_every: 5
+
+# Hardware
+device: cuda
+mixed_precision: false

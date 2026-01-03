@@ -1,0 +1,50 @@
+# Quick test configuration for QM9 training
+
+# Output directory
+output_dir: data/qm9_test
+
+# WandB configuration
+wandb:
+  enabled: true  # Set to false to disable WandB logging
+  project: molgen-bench  # WandB project name
+  entity: null  # WandB entity/team name (null uses default)
+  name: null  # Run name (null uses auto-generated name)
+  tags: [qm9, quick_test, flow_matching]  # Tags for this run
+
+# Data
+data:
+  dataset_type: qm9
+  data_dir: ./data/downloaded/qm9  # Directory containing QM9 data
+  batch_size: 32  # Small batch size for quick test
+  num_workers: 0  # Avoid multiprocessing issues on quick test
+
+# Model - small for quick test
+architecture:
+  type: gnn  # GNN for molecular graphs
+  hidden_dim: 128
+  num_layers: 3
+  dropout: 0.1
+  activation: silu
+  readout: sum  # sum or mean readout
+
+generative:
+  type: flow_matching
+  time_steps: 50  # Fewer discretization steps for quick test
+  sigma_min: 0.001
+  sigma_max: 1.0
+  schedule: cosine  # linear or cosine
+  loss_type: mse  # mse or huber
+
+# Training - quick test (just to verify it works)
+training:
+  epochs: 5  # Very short for quick test
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  gradient_clip: 1.0
+  use_scheduler: false  # No scheduler for quick test
+
+  log_interval: 10
+
+# Hardware
+device: cuda
+mixed_precision: false
