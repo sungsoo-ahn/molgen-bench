@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 from pathlib import Path
 
 from src.data import QM9Dataset, MP20Dataset, collate_molecular_data
-from src.models.architectures import GNN, Transformer, Pairformer
+from src.models.architectures import DiT
 from src.models.generative import FlowMatching, Diffusion, StochasticInterpolant
 from src.training import Trainer
 from src.evaluation import compute_all_metrics, print_metrics_summary
@@ -40,29 +40,19 @@ def create_architecture(config: dict):
     arch_config = config["architecture"]
     arch_type = arch_config["type"]
 
-    if arch_type == "gnn":
-        model = GNN(
+    if arch_type == "dit":
+        model = DiT(
             hidden_dim=arch_config.get("hidden_dim", 256),
             num_layers=arch_config.get("num_layers", 6),
+            num_heads=arch_config.get("num_heads", 4),
+            mlp_ratio=arch_config.get("mlp_ratio", 4.0),
+            num_atom_types=arch_config.get("num_atom_types", 100),
             dropout=arch_config.get("dropout", 0.1),
-            activation=arch_config.get("activation", "silu"),
-        )
-    elif arch_type == "transformer":
-        model = Transformer(
-            hidden_dim=arch_config.get("hidden_dim", 512),
-            num_layers=arch_config.get("num_layers", 8),
-            num_heads=arch_config.get("num_heads", 8),
-            dropout=arch_config.get("dropout", 0.1),
-        )
-    elif arch_type == "pairformer":
-        model = Pairformer(
-            node_dim=arch_config.get("node_dim", 256),
-            pair_dim=arch_config.get("pair_dim", 128),
-            num_layers=arch_config.get("num_layers", 4),
-            dropout=arch_config.get("dropout", 0.1),
+            max_atoms=arch_config.get("max_atoms", 256),
+            use_checkpoint=arch_config.get("use_checkpoint", False),
         )
     else:
-        raise ValueError(f"Unknown architecture: {arch_type}")
+        raise ValueError(f"Unknown architecture: {arch_type}. Only 'dit' is supported.")
 
     return model
 
@@ -78,7 +68,8 @@ def create_generative_model(backbone, config: dict):
             time_steps=gen_config.get("time_steps", 1000),
             sigma_min=gen_config.get("sigma_min", 0.001),
             sigma_max=gen_config.get("sigma_max", 1.0),
-            schedule=gen_config.get("noise_schedule", "cosine"),
+            schedule=gen_config.get("noise_schedule", "linear"),
+            loss_type=gen_config.get("loss_type", "mse"),
         )
     elif gen_type == "diffusion":
         model = Diffusion(

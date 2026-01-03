@@ -1,0 +1,35 @@
+# DiT (Diffusion Transformer) Architecture Configuration
+# Based on MinCatFlow architecture
+
+architecture:
+  type: dit
+
+  # Model dimensions (small config for fast experimentation)
+  hidden_dim: 256
+  num_layers: 6
+  num_heads: 4
+  mlp_ratio: 4.0  # MLP hidden = hidden_dim * mlp_ratio
+
+  # Atom handling
+  num_atom_types: 100
+  max_atoms: 256
+
+  # Regularization
+  dropout: 0.1
+
+  # Memory optimization
+  use_checkpoint: false  # Enable for large models to save memory
+
+# Alternative configurations:
+#
+# Medium config (balanced):
+#   hidden_dim: 512
+#   num_layers: 8
+#   num_heads: 8
+#   mlp_ratio: 4.0
+#
+# MinCatFlow full config (powerful but slower):
+#   hidden_dim: 768
+#   num_layers: 12
+#   num_heads: 12
+#   mlp_ratio: 4.0

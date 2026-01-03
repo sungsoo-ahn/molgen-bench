@@ -1,12 +1,10 @@
 """Molecular generative models."""
 
-from .architectures import GNN, Transformer, Pairformer
+from .architectures import DiT
 from .generative import FlowMatching, Diffusion, StochasticInterpolant
 
 __all__ = [
-    "GNN",
-    "Transformer",
-    "Pairformer",
+    "DiT",
     "FlowMatching",
     "Diffusion",
     "StochasticInterpolant",
