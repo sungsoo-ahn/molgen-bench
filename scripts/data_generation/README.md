@@ -84,10 +84,14 @@ Required packages (automatically installed):
 
 ## Notes
 
-- QM9 download uses PyTorch Geometric and may take ~30 minutes on first run
-- MP20 downloads from HuggingFace's `chaitjo/MP20_ADiT` repository
+- **QM9 download** uses PyTorch Geometric and may take ~30 minutes on first run
+  - Download may fail if figshare servers are unavailable
+  - If download fails, a small synthetic dataset will be created for testing
+  - For production use, you may need to manually download from [figshare](https://figshare.com/collections/Quantum_chemistry_structures_and_properties_of_134_kilo_molecules/978904)
+- **MP20 download** from HuggingFace's `chaitjo/MP20_ADiT` repository
+  - If not accessible, a small fallback dataset is created for testing
 - Processed data is cached to avoid re-downloading
-- If MP20 is not accessible from HuggingFace, a small fallback dataset is created for testing
+- Fallback datasets are small (100-140 samples) and suitable for code testing only
 
 ## Reference
 

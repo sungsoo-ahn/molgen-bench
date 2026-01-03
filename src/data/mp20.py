@@ -67,6 +67,14 @@ class MP20Dataset(Dataset):
                 "Install it with: uv add datasets"
             )
 
+        try:
+            from pymatgen.core import Structure
+        except ImportError:
+            raise ImportError(
+                "pymatgen is required to parse CIF files. "
+                "Install it with: uv add pymatgen"
+            )
+
         print(f"Downloading MP20 dataset from HuggingFace ({self.HF_DATASET_ID})...")
         print("This may take a while on first run...")
 
@@ -84,33 +92,45 @@ class MP20Dataset(Dataset):
 
         # Process structures
         data = []
+        errors = 0
         for idx, sample in enumerate(tqdm(hf_dataset, desc=f"Processing {self.split}")):
-            # Extract data from HuggingFace format
-            # Note: The exact format may vary - adjust based on actual dataset structure
-            positions = np.array(sample['positions'])  # (N, 3) fractional coordinates
-            atom_types = np.array(sample['atomic_numbers'])  # (N,) atomic numbers
+            try:
+                # Parse CIF string to get structure
+                cif_str = sample['cif']
+                structure = Structure.from_str(cif_str, fmt='cif')
 
-            # Extract properties if available
-            properties = {}
-            if 'formation_energy_per_atom' in sample:
-                properties['formation_energy'] = float(sample['formation_energy_per_atom'])
-            if 'band_gap' in sample:
-                properties['band_gap'] = float(sample['band_gap'])
-            if 'density' in sample:
-                properties['density'] = float(sample['density'])
+                # Extract atomic positions (fractional coordinates)
+                positions = structure.frac_coords  # (N, 3) fractional coordinates
+                atom_types = np.array([site.specie.Z for site in structure])  # Atomic numbers
 
-            # Extract lattice parameters if available
-            lattice = None
-            if 'lattice' in sample:
-                lattice = np.array(sample['lattice'])  # (3, 3) lattice vectors
+                # Extract lattice matrix
+                lattice = structure.lattice.matrix  # (3, 3) lattice vectors
 
-            data.append({
-                "positions": positions,
-                "atom_types": atom_types,
-                "properties": properties,
-                "lattice": lattice,
-                "id": idx
-            })
+                # Extract properties
+                properties = {
+                    'formation_energy': float(sample['formation_energy_per_atom']),
+                    'band_gap': float(sample['band_gap']),
+                }
+                if 'e_above_hull' in sample:
+                    properties['e_above_hull'] = float(sample['e_above_hull'])
+
+                data.append({
+                    "positions": positions,
+                    "atom_types": atom_types,
+                    "properties": properties,
+                    "lattice": lattice,
+                    "material_id": sample.get('material_id', f'sample_{idx}'),
+                    "id": idx
+                })
+
+            except Exception as e:
+                errors += 1
+                if errors <= 5:  # Print first few errors
+                    print(f"\nWarning: Failed to process sample {idx}: {e}")
+                continue
+
+        if errors > 0:
+            print(f"\nWarning: Failed to process {errors}/{len(hf_dataset)} samples")
 
         # Save processed data
         with open(self.processed_file, "wb") as f:
