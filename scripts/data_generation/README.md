@@ -5,10 +5,11 @@ This directory contains scripts to download and process the QM9 and MP20 dataset
 ## Available Datasets
 
 ### QM9
-- **Source**: PyTorch Geometric (`torch_geometric.datasets.QM9`)
+- **Source**: HuggingFace (`chaitjo/QM9_ADiT`)
 - **Size**: ~134k small organic molecules
 - **Properties**: Quantum chemical properties (dipole moment, HOMO-LUMO gap, etc.)
 - **Splits**: train (100k), val (10k), test (~31k)
+- **Download size**: 340MB (pre-processed PyTorch Geometric format)
 
 ### MP20
 - **Source**: HuggingFace (`chaitjo/MP20_ADiT`)
@@ -55,7 +56,7 @@ uv run python src/scripts/test_datasets.py --dataset all
 
 ## Download Time
 
-- **First download**: ~30-40 minutes (downloads and processes data)
+- **First download**: ~5-15 minutes (downloads pre-processed data from HuggingFace)
 - **Subsequent runs**: Instant (uses cached processed files)
 
 ## Data Structure
@@ -78,19 +79,21 @@ data/downloaded/
 ## Dependencies
 
 Required packages (automatically installed):
-- `torch-geometric` - For QM9 dataset
-- `datasets` - For HuggingFace MP20 dataset
-- `huggingface-hub` - For HuggingFace integration
+- `huggingface-hub` - For downloading QM9 and MP20 from HuggingFace
+- `datasets` - For HuggingFace MP20 dataset processing
+- `pymatgen` - For parsing MP20 CIF files
+- `torch` - For loading QM9 PyTorch tensors
 
 ## Notes
 
-- **QM9 download** uses PyTorch Geometric and may take ~30 minutes on first run
-  - Download may fail if figshare servers are unavailable
+- **QM9 download** from HuggingFace (`chaitjo/QM9_ADiT`)
+  - Downloads pre-processed PyTorch Geometric dataset (340MB)
+  - Much faster than processing from raw data (~5-10 minutes vs ~30 minutes)
   - If download fails, a small synthetic dataset will be created for testing
-  - For production use, you may need to manually download from [figshare](https://figshare.com/collections/Quantum_chemistry_structures_and_properties_of_134_kilo_molecules/978904)
-- **MP20 download** from HuggingFace's `chaitjo/MP20_ADiT` repository
+- **MP20 download** from HuggingFace (`chaitjo/MP20_ADiT`)
+  - Parses CIF files to extract crystal structures
   - If not accessible, a small fallback dataset is created for testing
-- Processed data is cached to avoid re-downloading
+- All data is cached by HuggingFace Hub to avoid re-downloading
 - Fallback datasets are small (100-140 samples) and suitable for code testing only
 
 ## Reference

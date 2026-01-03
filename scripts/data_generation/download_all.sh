@@ -11,8 +11,8 @@ echo "Downloading All Datasets"
 echo "========================================="
 echo "Data directory: $DATA_DIR"
 echo ""
-echo "This will download both QM9 and MP20 datasets."
-echo "Total download time may take ~30-40 minutes on first run."
+echo "This will download both QM9 and MP20 datasets from HuggingFace."
+echo "Total download time may take ~10-20 minutes on first run."
 echo ""
 
 # Download QM9

@@ -1,4 +1,7 @@
-"""QM9 dataset loader."""
+"""QM9 dataset loader.
+
+Loads QM9 dataset from HuggingFace (chaitjo/QM9_ADiT).
+"""
 
 import os
 import pickle
@@ -81,59 +84,70 @@ class QM9Dataset(Dataset):
         print(f"Loaded {len(self.data)} molecules from QM9 {split} split")
 
     def _download_and_process(self):
-        """Download and process QM9 dataset from PyTorch Geometric.
+        """Download and process QM9 dataset from HuggingFace.
 
-        Downloads the full QM9 dataset and splits it into train/val/test.
+        Downloads the pre-processed QM9 dataset from HuggingFace and splits it into train/val/test.
         """
         try:
-            from torch_geometric.datasets import QM9 as PyGQM9
+            from huggingface_hub import hf_hub_download
         except ImportError:
             raise ImportError(
-                "PyTorch Geometric is required to download QM9. "
-                "Install it with: uv add torch-geometric"
+                "huggingface_hub is required to download QM9. "
+                "Install it with: uv add huggingface-hub"
             )
 
-        print(f"Downloading QM9 dataset using PyTorch Geometric...")
-        print("This may take a while on first run (~30 minutes)...")
-        print("Note: Download may occasionally fail due to source availability.")
+        print(f"Downloading QM9 dataset from HuggingFace (chaitjo/QM9_ADiT)...")
+        print("This may take a while on first run (~5-10 minutes for 340MB file)...")
 
-        # Download full QM9 dataset to a temp directory
-        raw_dir = os.path.join(self.data_dir, "raw")
-
+        # Download processed data from HuggingFace
         try:
-            pyg_dataset = PyGQM9(root=raw_dir)
+            processed_file = hf_hub_download(
+                repo_id="chaitjo/QM9_ADiT",
+                filename="processed/data_v3.pt",
+                repo_type="dataset",
+                cache_dir=os.path.join(self.data_dir, "hf_cache")
+            )
+            print(f"Downloaded QM9 dataset to {processed_file}")
         except Exception as e:
-            print(f"\nError downloading QM9 from PyTorch Geometric: {e}")
-            print("\nThe QM9 dataset download from figshare may be temporarily unavailable.")
+            print(f"\nError downloading QM9 from HuggingFace: {e}")
+            print("\nThe QM9 dataset download from HuggingFace may be temporarily unavailable.")
             print("Options:")
-            print("1. Try again later (source servers may be down)")
-            print("2. Manually download from: https://figshare.com/collections/Quantum_chemistry_structures_and_properties_of_134_kilo_molecules/978904")
-            print(f"3. Place downloaded files in: {raw_dir}")
+            print("1. Try again later (HuggingFace servers may be down)")
+            print("2. Check your internet connection")
             print("\nFor now, creating a small synthetic dataset for testing...")
             self._create_fallback_data()
             return
 
-        print(f"Processing {len(pyg_dataset)} molecules for {self.split} split...")
+        # Load the processed PyTorch Geometric data
+        print(f"Loading processed QM9 data...")
+        # Note: weights_only=False is required for PyTorch Geometric Data objects
+        # The file contains: (data_dict, slices_dict, Data_class)
+        data_dict, slices_dict, _ = torch.load(processed_file, weights_only=False)
+
+        print(f"Loaded batched QM9 data with {len(slices_dict['y']) - 1} molecules")
 
         # Get split indices
         start_idx, end_idx = self.SPLIT_INDICES[self.split]
+        end_idx = min(end_idx, len(slices_dict['y']) - 1)
 
-        # Process molecules in this split
+        print(f"Processing {end_idx - start_idx} molecules for {self.split} split...")
+
+        # Process molecules in this split using slices
         data = []
         for idx in tqdm(range(start_idx, end_idx), desc=f"Processing {self.split}"):
-            if idx >= len(pyg_dataset):
-                break
+            # Extract data for this molecule using slices
+            # Get position slice indices
+            pos_start = slices_dict['pos'][idx].item()
+            pos_end = slices_dict['pos'][idx + 1].item()
 
-            mol = pyg_dataset[idx]
-
-            # Extract data from PyG format
-            positions = mol.pos.numpy()  # (N, 3) coordinates
-            atom_types = mol.z.numpy()   # (N,) atomic numbers
+            # Extract data from batched format
+            positions = data_dict['pos'][pos_start:pos_end].numpy()  # (N, 3) coordinates
+            atom_types = data_dict['z'][pos_start:pos_end].numpy()   # (N,) atomic numbers
 
             # Extract properties (y contains 19 properties, we use first 12)
             # Index mapping: mu(0), alpha(1), homo(2), lumo(3), gap(4), r2(5), zpve(6),
             #                U0(7), U(8), H(9), G(10), Cv(11)
-            y = mol.y.squeeze().numpy()
+            y = data_dict['y'][idx].numpy()
             properties = {
                 "mu": float(y[0]),
                 "alpha": float(y[1]),
@@ -149,11 +163,8 @@ class QM9Dataset(Dataset):
                 "Cv": float(y[11]),
             }
 
-            # Get formal charges if available
-            if hasattr(mol, 'charges'):
-                charges = mol.charges.numpy()
-            else:
-                charges = np.zeros(len(atom_types))
+            # Charges are typically not included, set to zero
+            charges = np.zeros(len(atom_types))
 
             data.append({
                 "positions": positions,

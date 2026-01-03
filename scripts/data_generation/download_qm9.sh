@@ -13,8 +13,8 @@ echo "Downloading QM9 Dataset"
 echo "========================================="
 echo "Data directory: $DATA_DIR"
 echo ""
-echo "This will download ~134k molecules from the QM9 dataset."
-echo "First download may take ~30 minutes."
+echo "This will download ~134k molecules from HuggingFace (chaitjo/QM9_ADiT)."
+echo "First download may take ~5-10 minutes (340MB file)."
 echo ""
 
 # Run the download script
