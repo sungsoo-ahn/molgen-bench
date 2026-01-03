@@ -5,6 +5,7 @@ This script trains generative models on 3D geometric shapes with molecular featu
 """
 
 import argparse
+import copy
 import yaml
 import torch
 import numpy as np
@@ -16,9 +17,88 @@ from tqdm import tqdm
 import wandb
 
 from src.data import ToyMolecular3DDataset, collate_molecular_data
-from src.data.utils import build_fully_connected_edges
-from src.models.architectures import GNN
+from src.models.architectures import DiT
 from src.models.generative import FlowMatching
+
+
+class EMA:
+    """Exponential Moving Average of model weights.
+
+    Maintains a shadow copy of model parameters that are updated with
+    exponential moving average during training. Use for sampling to get
+    smoother, higher-quality generations.
+    """
+
+    def __init__(self, model: torch.nn.Module, decay: float = 0.999):
+        """Initialize EMA.
+
+        Args:
+            model: Model to track
+            decay: EMA decay rate (higher = slower update)
+        """
+        self.decay = decay
+        self.shadow = {}
+        self.backup = {}
+
+        # Initialize shadow parameters
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                self.shadow[name] = param.data.clone()
+
+    def update(self, model: torch.nn.Module):
+        """Update shadow parameters with current model parameters.
+
+        Args:
+            model: Model with updated parameters
+        """
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                self.shadow[name] = (
+                    self.decay * self.shadow[name] +
+                    (1 - self.decay) * param.data
+                )
+
+    def apply_shadow(self, model: torch.nn.Module):
+        """Replace model parameters with shadow parameters.
+
+        Call this before sampling/evaluation.
+
+        Args:
+            model: Model to apply shadow parameters to
+        """
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                self.backup[name] = param.data.clone()
+                param.data = self.shadow[name]
+
+    def restore(self, model: torch.nn.Module):
+        """Restore original model parameters.
+
+        Call this after sampling/evaluation to continue training.
+
+        Args:
+            model: Model to restore parameters to
+        """
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                param.data = self.backup[name]
+        self.backup = {}
+
+
+def get_lr_with_warmup(step: int, warmup_steps: int, base_lr: float) -> float:
+    """Calculate learning rate with linear warmup.
+
+    Args:
+        step: Current training step
+        warmup_steps: Number of warmup steps
+        base_lr: Target learning rate after warmup
+
+    Returns:
+        Learning rate for current step
+    """
+    if step < warmup_steps:
+        return base_lr * (step + 1) / warmup_steps
+    return base_lr
 
 
 # Atom type mapping: [1, 6, 7, 8, 9] -> [0, 1, 2, 3, 4] (same as QM9)
@@ -108,15 +188,12 @@ def generate_samples(model, num_samples, num_atoms_range, device):
             atom_types = torch.tensor([ATOM_TYPE_MAP[a] for a in atom_types_raw],
                                        dtype=torch.long, device=device)
 
-            # Build edges for this molecule
+            # Batch index for single molecule
             batch_idx = torch.zeros(num_atoms, dtype=torch.long, device=device)
-            num_atoms_tensor = torch.tensor([num_atoms], dtype=torch.long, device=device)
-            edge_index = build_fully_connected_edges(batch_idx, num_atoms_tensor)
 
             # Generate through flow integration (model starts from noise internally)
             positions = model.sample(
                 atom_types=atom_types,
-                edge_index=edge_index,
                 batch_idx=batch_idx,
                 num_steps=100
             )
@@ -186,13 +263,15 @@ def main(args):
     print("\nCreating model...")
     num_atom_types = 5  # Same as QM9: H, C, N, O, F
 
-    backbone = GNN(
+    backbone = DiT(
         num_atom_types=num_atom_types,
         hidden_dim=config["architecture"]["hidden_dim"],
         num_layers=config["architecture"]["num_layers"],
+        num_heads=config["architecture"].get("num_heads", 4),
+        mlp_ratio=config["architecture"].get("mlp_ratio", 4.0),
         dropout=config["architecture"]["dropout"],
-        activation=config["architecture"].get("activation", "silu"),
-        readout=config["architecture"].get("readout", "sum")
+        max_atoms=config["architecture"].get("max_atoms", 256),
+        use_checkpoint=config["architecture"].get("use_checkpoint", False)
     )
 
     model = FlowMatching(
@@ -205,14 +284,27 @@ def main(args):
     ).to(device)
 
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Model: GNN + FlowMatching, {num_params:,} parameters")
+    print(f"Model: DiT + FlowMatching, {num_params:,} parameters")
 
     # Create optimizer
-    optimizer = torch.optim.Adam(
+    base_lr = config["training"]["learning_rate"]
+    optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=config["training"]["learning_rate"],
-        weight_decay=config["training"]["weight_decay"]
+        lr=base_lr,
+        weight_decay=config["training"]["weight_decay"],
+        betas=(0.9, 0.999)
     )
+
+    # Initialize EMA
+    use_ema = config["training"].get("use_ema", True)
+    ema_decay = config["training"].get("ema_decay", 0.999)
+    ema = EMA(model, decay=ema_decay) if use_ema else None
+    if use_ema:
+        print(f"EMA enabled with decay={ema_decay}")
+
+    # Warmup settings
+    warmup_steps = config["training"].get("warmup_steps", 0)
+    global_step = 0
 
     # Training loop
     print("\nStarting training...")
@@ -233,12 +325,8 @@ def main(args):
             for orig, new in ATOM_TYPE_MAP.items():
                 mapped_atom_types[atom_types == orig] = new
 
-            # Build fully connected edges
-            num_atoms = torch.bincount(batch_idx)
-            edge_index = build_fully_connected_edges(batch_idx, num_atoms)
-
-            # Forward pass
-            loss, info = model(positions, mapped_atom_types, edge_index, batch_idx)
+            # Forward pass (DiT doesn't need edge_index)
+            loss, info = model(positions, mapped_atom_types, batch_idx=batch_idx)
 
             # Backward pass
             optimizer.zero_grad()
@@ -251,19 +339,37 @@ def main(args):
                     config["training"]["gradient_clip"]
                 )
 
+            # Apply warmup learning rate
+            if warmup_steps > 0:
+                lr = get_lr_with_warmup(global_step, warmup_steps, base_lr)
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = lr
+
             optimizer.step()
 
+            # Update EMA
+            if ema is not None:
+                ema.update(model)
+
+            global_step += 1
             total_loss += loss.item()
             num_batches += 1
 
-            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+            current_lr = optimizer.param_groups[0]['lr']
+            pbar.set_postfix({"loss": f"{loss.item():.4f}", "lr": f"{current_lr:.2e}"})
 
         avg_loss = total_loss / num_batches
         print(f"Epoch {epoch}: avg_loss = {avg_loss:.4f}")
 
         # Log metrics to WandB
         if wandb.run is not None:
-            wandb.log({"epoch": epoch, "train/loss": avg_loss})
+            current_lr = optimizer.param_groups[0]['lr']
+            wandb.log({
+                "epoch": epoch,
+                "train/loss": avg_loss,
+                "train/lr": current_lr,
+                "train/global_step": global_step
+            })
 
         # Visualize every N epochs
         visualize_every = config["training"].get("visualize_every", 10)
@@ -277,6 +383,10 @@ def main(args):
                 mapped_types = np.array([ATOM_TYPE_MAP[a.item()] for a in sample["atom_types"]])
                 real_samples.append((sample["positions"].numpy(), mapped_types))
 
+            # Use EMA weights for generation if available
+            if ema is not None:
+                ema.apply_shadow(model)
+
             # Generate samples
             generated_samples = generate_samples(
                 model,
@@ -284,6 +394,10 @@ def main(args):
                 num_atoms_range=tuple(config["data"]["num_atoms_range"]),
                 device=device
             )
+
+            # Restore original weights after generation
+            if ema is not None:
+                ema.restore(model)
 
             # Visualize
             visualize_molecules_3d(
@@ -298,15 +412,31 @@ def main(args):
                 img_path = f"{output_dir}/figures/epoch_{epoch:04d}.png"
                 wandb.log({"visualizations/molecules": wandb.Image(img_path)})
 
-    # Save model
+    # Save model (use EMA weights as the primary model if available)
     model_path = output_dir / "final_model.pt"
-    torch.save({
+    save_dict = {
         'epoch': config["training"]["epochs"] - 1,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'train_loss': avg_loss,
-    }, model_path)
+        'global_step': global_step,
+    }
+    if ema is not None:
+        save_dict['ema_shadow'] = ema.shadow
+    torch.save(save_dict, model_path)
     print(f"\nSaved model to {model_path}")
+
+    # Also save EMA-only model for easy loading during inference
+    if ema is not None:
+        ema.apply_shadow(model)
+        ema_model_path = output_dir / "final_model_ema.pt"
+        torch.save({
+            'epoch': config["training"]["epochs"] - 1,
+            'model_state_dict': model.state_dict(),
+            'train_loss': avg_loss,
+        }, ema_model_path)
+        ema.restore(model)
+        print(f"Saved EMA model to {ema_model_path}")
 
     # Log model to WandB
     if wandb.run is not None:

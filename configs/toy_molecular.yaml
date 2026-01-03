@@ -10,8 +10,8 @@ wandb:
   enabled: true
   project: molgen-bench
   entity: null
-  name: toy_molecular_gnn
-  tags: [toy_molecular, flow_matching, gnn]
+  name: toy_molecular_dit
+  tags: [toy_molecular, flow_matching, dit]
 
 # Data
 data:
@@ -26,12 +26,14 @@ data:
 
 # Model
 architecture:
-  type: gnn
-  hidden_dim: 128
-  num_layers: 4
+  type: dit
+  hidden_dim: 256
+  num_layers: 6
+  num_heads: 8
+  mlp_ratio: 4.0
   dropout: 0.0
-  activation: silu
-  readout: sum
+  max_atoms: 256
+  use_checkpoint: false
 
 generative:
   type: flow_matching
@@ -44,9 +46,14 @@ generative:
 # Training
 training:
   epochs: 100
-  learning_rate: 0.001
+  learning_rate: 0.0003
   weight_decay: 0.00001
   gradient_clip: 1.0
+  warmup_steps: 500
+
+  # EMA settings
+  ema_decay: 0.999
+  use_ema: true
 
   log_interval: 10
   visualize_every: 10  # Visualize every N epochs

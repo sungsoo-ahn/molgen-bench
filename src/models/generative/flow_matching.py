@@ -55,8 +55,12 @@ class FlowMatching(nn.Module):
         if not self._dit_style:
             self.time_embedding = TimeEmbedding(backbone.hidden_dim)
 
-        # Velocity head will be created lazily
-        self._velocity_head = None
+        # Velocity head - must be initialized here so it's included in model.parameters()
+        self.velocity_head = nn.Sequential(
+            nn.Linear(backbone.hidden_dim, backbone.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(backbone.hidden_dim, 3)
+        )
 
     def _check_dit_style(self) -> bool:
         """Check if backbone handles time conditioning internally."""
@@ -64,34 +68,43 @@ class FlowMatching(nn.Module):
         sig = inspect.signature(self.backbone.forward)
         return 't' in sig.parameters
 
-    def get_schedule(self, t: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Get interpolation schedule.
+    def get_schedule(self, t: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Get interpolation schedule and its derivatives.
 
-        For flow matching, we use linear interpolation:
-        x_t = (1 - t) * x_0 + t * x_1
+        For flow matching, we use interpolation:
+        x_t = sigma_t * x_0 + alpha_t * x_1
         where x_0 ~ N(0, I) and x_1 is data.
+
+        The velocity is: v_t = d(alpha_t)/dt * x_1 + d(sigma_t)/dt * x_0
 
         Args:
             t: (B,) time values in [0, 1]
 
         Returns:
-            alpha_t: Interpolation coefficient for data (t)
-            sigma_t: Noise level (1 - t)
+            alpha_t: Interpolation coefficient for data
+            sigma_t: Noise coefficient
+            d_alpha_t: Derivative of alpha_t w.r.t. t
+            d_sigma_t: Derivative of sigma_t w.r.t. t
         """
         if self.schedule == "linear":
             # Standard linear interpolation for flow matching
             alpha_t = t
             sigma_t = 1 - t
+            d_alpha_t = torch.ones_like(t)
+            d_sigma_t = -torch.ones_like(t)
 
         elif self.schedule == "cosine":
             # Cosine schedule
             alpha_t = 1 - torch.cos(t * math.pi / 2)
             sigma_t = torch.cos(t * math.pi / 2)
+            # Derivatives
+            d_alpha_t = (math.pi / 2) * torch.sin(t * math.pi / 2)
+            d_sigma_t = -(math.pi / 2) * torch.sin(t * math.pi / 2)
 
         else:
             raise ValueError(f"Unknown schedule: {self.schedule}")
 
-        return alpha_t, sigma_t
+        return alpha_t, sigma_t, d_alpha_t, d_sigma_t
 
     def forward(
         self,
@@ -125,17 +138,21 @@ class FlowMatching(nn.Module):
         # Sample noise from prior
         noise = torch.randn_like(positions)
 
-        # Get schedule
-        alpha_t, sigma_t = self.get_schedule(t)
+        # Get schedule and derivatives
+        alpha_t, sigma_t, d_alpha_t, d_sigma_t = self.get_schedule(t)
 
         # Expand for per-atom interpolation
         if batch_idx is not None:
             alpha_t_expanded = alpha_t[batch_idx].unsqueeze(-1)
             sigma_t_expanded = sigma_t[batch_idx].unsqueeze(-1)
+            d_alpha_t_expanded = d_alpha_t[batch_idx].unsqueeze(-1)
+            d_sigma_t_expanded = d_sigma_t[batch_idx].unsqueeze(-1)
             t_expanded = t[batch_idx]
         else:
             alpha_t_expanded = alpha_t.unsqueeze(-1)
             sigma_t_expanded = sigma_t.unsqueeze(-1)
+            d_alpha_t_expanded = d_alpha_t.unsqueeze(-1)
+            d_sigma_t_expanded = d_sigma_t.unsqueeze(-1)
             t_expanded = t.expand(positions.size(0))
 
         # Interpolate: x_t = sigma_t * x_0 + alpha_t * x_1
@@ -143,8 +160,8 @@ class FlowMatching(nn.Module):
         noisy_positions = sigma_t_expanded * noise + alpha_t_expanded * positions
 
         # Target velocity for conditional flow matching
-        # v_t = x_1 - x_0 (constant velocity along straight path)
-        target_velocity = positions - noise
+        # v_t = d(alpha_t)/dt * x_1 + d(sigma_t)/dt * x_0
+        target_velocity = d_alpha_t_expanded * positions + d_sigma_t_expanded * noise
 
         # Predict velocity
         if self._dit_style:
@@ -265,25 +282,6 @@ class FlowMatching(nn.Module):
         if return_trajectory:
             return trajectory
         return positions
-
-    @property
-    def velocity_head(self) -> nn.Module:
-        """Velocity prediction head (created lazily)."""
-        if self._velocity_head is None:
-            self._velocity_head = nn.Sequential(
-                nn.Linear(self.backbone.hidden_dim, self.backbone.hidden_dim),
-                nn.SiLU(),
-                nn.Linear(self.backbone.hidden_dim, 3)
-            )
-            # Move to same device as backbone
-            device = next(self.backbone.parameters()).device
-            self._velocity_head = self._velocity_head.to(device)
-        return self._velocity_head
-
-    @velocity_head.setter
-    def velocity_head(self, value: nn.Module):
-        """Set velocity head."""
-        self._velocity_head = value
 
 
 class TimeEmbedding(nn.Module):
