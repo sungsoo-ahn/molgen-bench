@@ -1,0 +1,29 @@
+# Diffusion Model Configuration
+
+generative:
+  type: diffusion
+
+  # Diffusion process
+  diffusion_type: ddpm  # ddpm, ddim, score_sde
+  time_steps: 1000
+  beta_schedule: cosine  # linear, cosine, sigmoid
+
+  # Noise schedule parameters
+  beta_start: 0.0001
+  beta_end: 0.02
+
+  # Variance
+  variance_type: fixed_small  # fixed_small, fixed_large, learned
+
+  # Loss
+  loss_type: mse  # mse, l1, hybrid
+
+  # Sampling
+  sampler: ddpm  # ddpm, ddim, ancestral
+  num_sampling_steps: 100
+  eta: 0.0  # DDIM parameter (0 = deterministic)
+
+  # Classifier-free guidance
+  use_cfg: false
+  cfg_scale: 1.0
+  unconditional_prob: 0.1

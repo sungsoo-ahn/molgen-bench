@@ -1,0 +1,31 @@
+# Stochastic Interpolant Configuration
+
+generative:
+  type: stochastic_interpolant
+
+  # Interpolant specification
+  interpolant_type: polynomial  # linear, polynomial, trigonometric
+  time_steps: 1000
+
+  # Polynomial interpolant parameters (if applicable)
+  polynomial_degree: 3
+
+  # Noise process
+  gamma_min: 0.0
+  gamma_max: 1.0
+  gamma_schedule: variance_preserving  # variance_preserving, variance_exploding
+
+  # I2SB parameters
+  use_i2sb: false  # Image-to-Image Schrödinger Bridge
+
+  # Loss
+  loss_type: dsm  # dsm (denoising score matching), ism (interpolant score matching)
+  loss_weighting: likelihood  # uniform, likelihood
+
+  # Sampling
+  sampler: ode  # ode, sde
+  num_sampling_steps: 100
+  sde_temperature: 1.0
+
+  # Bridge matching
+  bridge_type: schrodinger  # schrodinger, affine

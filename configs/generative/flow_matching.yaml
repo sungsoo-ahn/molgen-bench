@@ -1,0 +1,29 @@
+# Flow Matching Configuration
+
+generative:
+  type: flow_matching
+
+  # Flow specification
+  flow_type: conditional  # conditional, optimal_transport
+  time_steps: 1000
+
+  # Noise schedule
+  sigma_min: 0.001
+  sigma_max: 1.0
+  schedule: cosine  # linear, cosine, polynomial
+
+  # Interpolation
+  interpolation: linear  # linear, geodesic
+
+  # Loss
+  loss_type: mse  # mse, huber
+  loss_weighting: uniform  # uniform, snr, truncated_snr
+
+  # Sampling
+  sampler: euler  # euler, heun, dopri5
+  num_sampling_steps: 100
+  adaptive_step_size: false
+
+  # Guidance (for conditional generation)
+  use_guidance: false
+  guidance_scale: 1.0

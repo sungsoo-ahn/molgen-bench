@@ -1,0 +1,79 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb_checkpoints
+
+# Data - organized by template pattern
+data/
+
+# Resources - additional resources downloaded and provided
+resources/*
+!resources/.gitkeep
+
+# Scratch - temporary work directory
+scratch/*
+!scratch/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+*.log
+
+# Model files
+*.pt
+*.pth
+*.safetensors
+*.bin
+*.ckpt
+
+# UV
+uv.lock
+
+# Experiment outputs
+outputs/
+results/
+wandb/
+runs/
+checkpoints/
+*.egg-info/
+
+# Molecular data formats (project-specific)
+*.pkl
+*.h5
+*.hdf5
+
+# Legacy build artifacts
+build/
+dist/
+eggs/
+.eggs/
+lib/
+lib64/
+sdist/
+wheels/
+*.egg
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
