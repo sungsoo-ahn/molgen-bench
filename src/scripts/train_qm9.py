@@ -17,6 +17,7 @@ from src.data import QM9Dataset, collate_molecular_data
 from src.models.architectures import DiT
 from src.models.generative import FlowMatching
 from src.evaluation.sample_quality import compute_atom_stability, compute_molecule_stability
+from src.utils.optimizers import create_optimizer, CombinedOptimizer
 
 
 def compute_gradient_metrics(model: torch.nn.Module) -> dict:
@@ -438,11 +439,15 @@ def main(args):
             project=wandb_config.get("project", "molgen-bench"),
             entity=wandb_config.get("entity", None),
             name=wandb_config.get("name", None),
+            group=wandb_config.get("group", None),  # For grouping related experiments
+            job_type=wandb_config.get("job_type", "train"),
             config=config,
             tags=wandb_config.get("tags", []),
         )
         wandb.run.log_code(root=".", include_fn=lambda path: path.endswith(".py") or path.endswith(".yaml"))
-        print("WandB initialized and code logged")
+        print(f"WandB initialized: {wandb.run.name}")
+        if wandb_config.get("group"):
+            print(f"  Group: {wandb_config.get('group')}")
     else:
         print("WandB disabled")
 
@@ -514,12 +519,28 @@ def main(args):
 
     # Create optimizer
     base_lr = config["training"]["learning_rate"]
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=base_lr,
+    optimizer_type = config["training"].get("optimizer", "adamw")
+    muon_lr = config["training"].get("muon_lr", 0.02)
+    muon_momentum = config["training"].get("muon_momentum", 0.95)
+
+    optimizer = create_optimizer(
+        model,
+        optimizer_type=optimizer_type,
+        learning_rate=base_lr,
         weight_decay=config["training"]["weight_decay"],
-        betas=(0.9, 0.999)
+        betas=(0.9, 0.999),
+        muon_momentum=muon_momentum,
+        muon_lr=muon_lr,
     )
+
+    # Log optimizer info
+    if isinstance(optimizer, CombinedOptimizer):
+        print(f"Optimizer: {optimizer_type} (combined: {optimizer._names})")
+        for name, opt in optimizer.optimizers:
+            num_params = sum(p.numel() for g in opt.param_groups for p in g['params'])
+            print(f"  {name}: {num_params:,} parameters, lr={opt.param_groups[0]['lr']}")
+    else:
+        print(f"Optimizer: {optimizer_type}, lr={base_lr}")
 
     # Initialize EMA
     use_ema = config["training"].get("use_ema", True)
@@ -598,10 +619,18 @@ def main(args):
                     train_metrics.add({f"loss/{key}": value})
 
             # Apply warmup learning rate
-            if warmup_steps > 0:
-                lr = get_lr_with_warmup(global_step, warmup_steps, base_lr)
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = lr
+            if warmup_steps > 0 and global_step < warmup_steps:
+                warmup_factor = (global_step + 1) / warmup_steps
+                if isinstance(optimizer, CombinedOptimizer):
+                    # Scale each optimizer's base LR
+                    for name, opt in optimizer.optimizers:
+                        for param_group in opt.param_groups:
+                            base = muon_lr if name == 'muon' else base_lr
+                            param_group['lr'] = base * warmup_factor
+                else:
+                    lr = get_lr_with_warmup(global_step, warmup_steps, base_lr)
+                    for param_group in optimizer.param_groups:
+                        param_group['lr'] = lr
 
             optimizer.step()
 
@@ -613,7 +642,12 @@ def main(args):
             total_train_loss += loss.item()
             num_train_batches += 1
 
-            current_lr = optimizer.param_groups[0]['lr']
+            if isinstance(optimizer, CombinedOptimizer):
+                current_lr = optimizer.param_groups[0]['lr']  # First group's LR
+                lr_dict = optimizer.get_lr()
+            else:
+                current_lr = optimizer.param_groups[0]['lr']
+                lr_dict = {"adamw": current_lr}
             pbar.set_postfix({
                 "loss": f"{loss.item():.4f}",
                 "lr": f"{current_lr:.2e}",
@@ -627,6 +661,10 @@ def main(args):
                     "train/lr": current_lr,
                     "train/global_step": global_step,
                 }
+
+                # Log per-optimizer learning rates
+                for opt_name, opt_lr in lr_dict.items():
+                    step_metrics[f"train/lr_{opt_name}"] = opt_lr
 
                 # Add flow matching specific metrics
                 step_metrics["train/loss_early"] = info.get("loss_early", 0)
@@ -727,7 +765,13 @@ def main(args):
 
         # Log metrics to WandB
         if wandb.run is not None:
-            current_lr = optimizer.param_groups[0]['lr']
+            if isinstance(optimizer, CombinedOptimizer):
+                current_lr = optimizer.param_groups[0]['lr']
+                lr_dict = optimizer.get_lr()
+            else:
+                current_lr = optimizer.param_groups[0]['lr']
+                lr_dict = {"adamw": current_lr}
+
             epoch_metrics = {
                 "epoch": epoch,
                 "train/loss": avg_train_loss,
@@ -735,6 +779,10 @@ def main(args):
                 "train/lr": current_lr,
                 "train/global_step": global_step,
             }
+
+            # Log per-optimizer learning rates
+            for opt_name, opt_lr in lr_dict.items():
+                epoch_metrics[f"train/lr_{opt_name}"] = opt_lr
 
             # Add detailed metrics if enabled
             if log_detailed_metrics:

@@ -1,0 +1,61 @@
+# Base configuration for experiments
+# This serves as a template - specific experiments override these values
+
+output_dir: data/experiments/base
+
+wandb:
+  enabled: true
+  project: molgen-bench
+  entity: null
+  tags: [qm9, flow_matching, dit, experiment]
+
+data:
+  dataset_type: qm9
+  data_dir: ./data/downloaded/qm9
+  batch_size: 64
+  num_workers: 4
+
+architecture:
+  type: dit
+  hidden_dim: 256
+  num_layers: 6
+  num_heads: 8
+  mlp_ratio: 4.0
+  dropout: 0.0
+  max_atoms: 64
+
+generative:
+  type: flow_matching
+  time_steps: 1000
+  sigma_min: 0.001
+  sigma_max: 1.0
+  schedule: cosine
+  loss_type: mse
+
+training:
+  epochs: 100
+  optimizer: adamw
+  learning_rate: 0.0003
+  weight_decay: 0.00001
+  gradient_clip: 1.0
+  warmup_steps: 1000
+
+  # Muon-specific (only used when optimizer: muon)
+  muon_lr: 0.02
+  muon_momentum: 0.95
+
+  # EMA settings
+  ema_decay: 0.9999
+  use_ema: true
+
+  # Evaluation settings
+  eval_every: 10
+  eval_samples: 100
+  eval_steps: 100
+
+  # Logging settings
+  log_interval: 100
+  log_detailed_metrics: true
+
+device: cuda
+mixed_precision: false

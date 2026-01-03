@@ -1,0 +1,55 @@
+data:
+  batch_size: 128
+  data_dir: ./data/downloaded/qm9
+  dataset_type: qm9
+  num_workers: 4
+device: cuda
+generative:
+  loss_type: mse
+  schedule: cosine
+  sigma_max: 1.0
+  sigma_min: 0.001
+  time_steps: 1000
+  type: flow_matching
+training:
+  ema_decay: 0.9999
+  epochs: 100
+  eval_every: 10
+  eval_samples: 100
+  eval_steps: 100
+  gradient_clip: 1.0
+  log_detailed_metrics: true
+  log_interval: 100
+  use_ema: true
+  warmup_steps: 1000
+  weight_decay: 1.0e-05
+  optimizer: muon
+  learning_rate: 0.0003
+  muon_lr: 0.02
+  muon_momentum: 0.95
+wandb:
+  enabled: true
+  entity: null
+  project: molgen-bench
+  name: small_muon_fp32
+  group: overnight_v1
+  job_type: train
+  tags:
+  - qm9
+  - flow_matching
+  - dit
+  - experiment
+  - size_small
+  - opt_muon
+  - prec_fp32
+  - overnight_v1
+output_dir: data/experiments/overnight_v1/small_muon_fp32
+architecture:
+  type: dit
+  dropout: 0.0
+  max_atoms: 64
+  hidden_dim: 128
+  num_layers: 4
+  num_heads: 4
+  mlp_ratio: 4.0
+mixed_precision: false

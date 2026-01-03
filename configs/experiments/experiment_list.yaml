@@ -1,0 +1,22 @@
+experiments:
+- configs/experiments/small_adamw_fp32.yaml
+- configs/experiments/small_adamw_fp16.yaml
+- configs/experiments/small_muon_fp32.yaml
+- configs/experiments/small_muon_fp16.yaml
+- configs/experiments/medium_adamw_fp32.yaml
+- configs/experiments/medium_adamw_fp16.yaml
+- configs/experiments/medium_muon_fp32.yaml
+- configs/experiments/medium_muon_fp16.yaml
+- configs/experiments/large_adamw_fp32.yaml
+- configs/experiments/large_adamw_fp16.yaml
+- configs/experiments/large_muon_fp32.yaml
+- configs/experiments/large_muon_fp16.yaml
+- configs/experiments/medium_adamw_lr_low.yaml
+- configs/experiments/medium_adamw_lr_default.yaml
+- configs/experiments/medium_adamw_lr_high.yaml
+- configs/experiments/medium_muon_lr_low.yaml
+- configs/experiments/medium_muon_lr_default.yaml
+- configs/experiments/medium_muon_lr_high.yaml
+- configs/experiments/medium_adamw_linear.yaml
+- configs/experiments/medium_adamw_cosine.yaml
+group: overnight_v1

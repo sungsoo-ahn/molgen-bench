@@ -17,7 +17,8 @@
       "Bash(uv remove:*)",
       "Bash(git check-ignore:*)",
       "Bash(python -c:*)",
-      "Bash(tee:*)"
+      "Bash(tee:*)",
+      "WebSearch"
     ]
   }
 }
