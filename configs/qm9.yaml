@@ -8,24 +8,25 @@ wandb:
   enabled: true
   project: molgen-bench
   entity: null
-  name: qm9_flowmatching_gnn
-  tags: [qm9, flow_matching, gnn]
+  name: qm9_flowmatching_dit
+  tags: [qm9, flow_matching, dit]
 
 # Data
 data:
   dataset_type: qm9
   data_dir: ./data/downloaded/qm9
-  batch_size: 128
+  batch_size: 64
   num_workers: 4
 
 # Model
 architecture:
-  type: gnn
+  type: dit
   hidden_dim: 256
-  num_layers: 5
-  dropout: 0.1
-  activation: silu
-  readout: sum
+  num_layers: 6
+  num_heads: 8
+  mlp_ratio: 4.0
+  dropout: 0.0
+  max_atoms: 64
 
 generative:
   type: flow_matching
@@ -41,10 +42,19 @@ training:
   learning_rate: 0.0003
   weight_decay: 0.00001
   gradient_clip: 1.0
-  use_scheduler: true  # Use ReduceLROnPlateau
+  warmup_steps: 1000
+
+  # EMA settings
+  ema_decay: 0.9999
+  use_ema: true
+
+  # Evaluation settings
+  eval_every: 10        # Evaluate generation every N epochs
+  eval_samples: 100     # Number of molecules to generate for evaluation
+  eval_steps: 100       # ODE integration steps for generation
 
   log_interval: 100
 
 # Hardware
 device: cuda
-mixed_precision: true
+mixed_precision: false

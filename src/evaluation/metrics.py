@@ -5,7 +5,15 @@ from .sample_quality import (
     compute_validity,
     compute_uniqueness,
     compute_novelty,
-    compute_molecular_properties
+    compute_molecular_properties,
+    compute_atom_stability,
+    compute_molecule_stability,
+    compute_validity_rdkit,
+    compute_uniqueness_smiles,
+    compute_novelty_smiles,
+    mol_to_smiles,
+    RDKIT_AVAILABLE,
+    OPENBABEL_AVAILABLE,
 )
 from .distribution_matching import (
     compute_wasserstein_distance,
@@ -34,6 +42,8 @@ def compute_all_metrics(
     """
     if metrics is None:
         metrics = [
+            "atom_stability",
+            "molecule_stability",
             "validity",
             "uniqueness",
             "novelty",
@@ -46,6 +56,12 @@ def compute_all_metrics(
     results = {}
 
     # Sample quality metrics
+    if "atom_stability" in metrics:
+        results["atom_stability"] = compute_atom_stability(generated_molecules)
+
+    if "molecule_stability" in metrics:
+        results["molecule_stability"] = compute_molecule_stability(generated_molecules)
+
     if "validity" in metrics:
         results["validity"] = compute_validity(generated_molecules)
 
@@ -91,10 +107,20 @@ def print_metrics_summary(metrics: Dict):
     print("Evaluation Metrics Summary")
     print("="*60)
 
+    # Atom Stability
+    if "atom_stability" in metrics:
+        a = metrics["atom_stability"]
+        print(f"\nAtom Stability: {a['atom_stability']:.3f} ({a['num_stable_atoms']}/{a['num_total_atoms']})")
+
+    # Molecule Stability
+    if "molecule_stability" in metrics:
+        m = metrics["molecule_stability"]
+        print(f"Molecule Stability: {m['molecule_stability']:.3f} ({m['num_stable_molecules']}/{m['num_total_molecules']})")
+
     # Validity
     if "validity" in metrics:
         v = metrics["validity"]
-        print(f"\nValidity: {v['validity']:.3f} ({v['num_valid']}/{v['num_total']})")
+        print(f"Validity: {v['validity']:.3f} ({v['num_valid']}/{v['num_total']})")
 
     # Uniqueness
     if "uniqueness" in metrics:

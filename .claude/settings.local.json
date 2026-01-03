@@ -3,7 +3,21 @@
     "allow": [
       "Bash(mkdir:*)",
       "Bash(tree:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git add:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(uv add:*)",
+      "Bash(chmod:*)",
+      "Bash(uv run python:*)",
+      "Bash(bash:*)",
+      "Bash(pkill -f \"uv run python -c\")",
+      "Bash(uv remove:*)",
+      "Bash(git check-ignore:*)",
+      "Bash(python -c:*)",
+      "Bash(tee:*)"
     ]
   }
 }
