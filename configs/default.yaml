@@ -3,6 +3,14 @@
 # Output directory for results (required by template conventions)
 output_dir: data/default_experiment
 
+# WandB configuration
+wandb:
+  enabled: false  # Set to true to enable WandB logging
+  project: molgen-bench  # WandB project name
+  entity: null  # WandB entity/team name (null uses default)
+  name: null  # Run name (null uses auto-generated name)
+  tags: [molecular_generation, flow_matching]  # Tags for this run
+
 # Data
 data:
   dataset: qm9  # qm9 or mp20
