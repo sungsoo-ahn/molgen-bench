@@ -503,6 +503,9 @@ def main(args):
         mlp_ratio=config["architecture"].get("mlp_ratio", 4.0),
         dropout=config["architecture"]["dropout"],
         max_atoms=config["architecture"].get("max_atoms", 64),
+        pos_encoding=config["architecture"].get("pos_encoding", "learnable"),
+        coord_encoding=config["architecture"].get("coord_encoding", "linear"),
+        norm_type=config["architecture"].get("norm_type", "layernorm"),
     )
 
     model = FlowMatching(

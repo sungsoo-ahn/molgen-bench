@@ -11,6 +11,75 @@ from typing import Optional
 from torch.utils.checkpoint import checkpoint
 
 
+def sinusoidal_embedding(x: torch.Tensor, dim: int) -> torch.Tensor:
+    """Generate sinusoidal embeddings.
+
+    Args:
+        x: (*, ) input values
+        dim: Embedding dimension (must be even)
+
+    Returns:
+        (*, dim) sinusoidal embeddings
+    """
+    half_dim = dim // 2
+    emb = math.log(10000) / (half_dim - 1)
+    emb = torch.exp(torch.arange(half_dim, device=x.device, dtype=x.dtype) * -emb)
+    emb = x.unsqueeze(-1) * emb.unsqueeze(0)
+    emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=-1)
+    return emb
+
+
+class FourierFeatures(nn.Module):
+    """Fourier feature encoding for continuous values (coordinates, time).
+
+    Maps inputs to higher-dimensional space using random Fourier features,
+    which helps networks learn high-frequency functions.
+    """
+
+    def __init__(self, in_dim: int, out_dim: int, std: float = 1.0):
+        """Initialize FourierFeatures.
+
+        Args:
+            in_dim: Input dimension
+            out_dim: Output dimension (must be even)
+            std: Standard deviation for random frequencies
+        """
+        super().__init__()
+        assert out_dim % 2 == 0
+        self.register_buffer(
+            'freqs',
+            torch.randn(in_dim, out_dim // 2) * std * 2 * math.pi
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply Fourier features.
+
+        Args:
+            x: (*, in_dim) input tensor
+
+        Returns:
+            (*, out_dim) Fourier features
+        """
+        x_proj = x @ self.freqs  # (*, out_dim // 2)
+        return torch.cat([torch.sin(x_proj), torch.cos(x_proj)], dim=-1)
+
+
+class RMSNorm(nn.Module):
+    """Root Mean Square Layer Normalization.
+
+    Simpler and often faster than LayerNorm, used in LLaMA and other models.
+    """
+
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        rms = torch.sqrt(torch.mean(x ** 2, dim=-1, keepdim=True) + self.eps)
+        return x / rms * self.weight
+
+
 class TimestepEmbedder(nn.Module):
     """Sinusoidal timestep embeddings with MLP projection.
 
@@ -42,11 +111,7 @@ class TimestepEmbedder(nn.Module):
         Returns:
             embedding: (B, hidden_dim) or (N, hidden_dim)
         """
-        half_dim = self.freq_dim // 2
-        emb = math.log(10000) / (half_dim - 1)
-        emb = torch.exp(torch.arange(half_dim, device=t.device, dtype=t.dtype) * -emb)
-        emb = t.unsqueeze(-1) * emb.unsqueeze(0)
-        emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=-1)
+        emb = sinusoidal_embedding(t, self.freq_dim)
         return self.mlp(emb)
 
 
@@ -225,7 +290,10 @@ class DiT(nn.Module):
         num_atom_types: int = 100,
         dropout: float = 0.1,
         max_atoms: int = 256,
-        use_checkpoint: bool = False
+        use_checkpoint: bool = False,
+        pos_encoding: str = "learnable",
+        coord_encoding: str = "linear",
+        norm_type: str = "layernorm",
     ):
         """Initialize DiT.
 
@@ -238,23 +306,65 @@ class DiT(nn.Module):
             dropout: Dropout rate
             max_atoms: Maximum number of atoms (for positional encoding)
             use_checkpoint: Use gradient checkpointing to save memory
+            pos_encoding: Type of positional encoding
+                - "learnable": Learnable position embeddings (default)
+                - "sinusoidal": Fixed sinusoidal embeddings
+                - "none": No positional encoding (rely on coordinates)
+            coord_encoding: Type of coordinate encoding
+                - "linear": Linear projection (default)
+                - "fourier": Random Fourier features
+                - "none": No coordinate encoding
+            norm_type: Type of normalization
+                - "layernorm": Standard LayerNorm (default)
+                - "rmsnorm": RMSNorm (faster, used in LLaMA)
         """
         super().__init__()
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self.use_checkpoint = use_checkpoint
+        self.pos_encoding_type = pos_encoding
+        self.coord_encoding_type = coord_encoding
+        self.max_atoms = max_atoms
 
         # Atom embedding
         self.atom_embedding = nn.Embedding(num_atom_types, hidden_dim)
 
-        # Position embedding (learnable)
-        self.pos_embedding = nn.Parameter(torch.randn(1, max_atoms, hidden_dim) * 0.02)
+        # Position embedding
+        if pos_encoding == "learnable":
+            self.pos_embedding = nn.Parameter(torch.randn(1, max_atoms, hidden_dim) * 0.02)
+        elif pos_encoding == "sinusoidal":
+            # Pre-compute sinusoidal embeddings
+            pos = torch.arange(max_atoms).float()
+            pe = sinusoidal_embedding(pos, hidden_dim)
+            self.register_buffer('pos_embedding', pe.unsqueeze(0))
+        elif pos_encoding == "none":
+            self.pos_embedding = None
+        else:
+            raise ValueError(f"Unknown pos_encoding: {pos_encoding}")
 
-        # Coordinate projection
-        self.coord_proj = nn.Linear(3, hidden_dim)
+        # Coordinate encoding
+        if coord_encoding == "linear":
+            self.coord_proj = nn.Linear(3, hidden_dim)
+        elif coord_encoding == "fourier":
+            self.coord_proj = nn.Sequential(
+                FourierFeatures(3, hidden_dim, std=10.0),
+                nn.Linear(hidden_dim, hidden_dim),
+            )
+        elif coord_encoding == "none":
+            self.coord_proj = None
+        else:
+            raise ValueError(f"Unknown coord_encoding: {coord_encoding}")
 
         # Timestep embedding
         self.time_embed = TimestepEmbedder(hidden_dim)
+
+        # Select normalization type
+        if norm_type == "layernorm":
+            norm_cls = nn.LayerNorm
+        elif norm_type == "rmsnorm":
+            norm_cls = RMSNorm
+        else:
+            raise ValueError(f"Unknown norm_type: {norm_type}")
 
         # Transformer blocks
         self.blocks = nn.ModuleList([
@@ -268,7 +378,7 @@ class DiT(nn.Module):
         ])
 
         # Final layer norm
-        self.final_norm = nn.LayerNorm(hidden_dim)
+        self.final_norm = norm_cls(hidden_dim)
 
         # Output projection
         self.output_proj = nn.Linear(hidden_dim, hidden_dim)
@@ -332,10 +442,12 @@ class DiT(nn.Module):
             x = self.atom_embedding(atom_types)  # (B, N, hidden_dim)
 
             # Add positional encoding
-            x = x + self.pos_embedding[:, :N, :]
+            if self.pos_embedding is not None:
+                x = x + self.pos_embedding[:, :N, :]
 
             # Add coordinate information
-            x = x + self.coord_proj(positions)
+            if self.coord_proj is not None:
+                x = x + self.coord_proj(positions)
 
             mask = None
 
@@ -422,8 +534,10 @@ class DiT(nn.Module):
 
         # Embed
         x = self.atom_embedding(padded_types)
-        x = x + self.pos_embedding[:, :max_size, :]
-        x = x + self.coord_proj(padded_pos)
+        if self.pos_embedding is not None:
+            x = x + self.pos_embedding[:, :max_size, :]
+        if self.coord_proj is not None:
+            x = x + self.coord_proj(padded_pos)
 
         return x, mask, batch_sizes
 

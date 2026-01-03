@@ -88,6 +88,33 @@ LR_VARIANTS = {
 SCHEDULE_VARIANTS = {
     "linear": {"schedule": "linear"},
     "cosine": {"schedule": "cosine"},
+    "sigmoid": {"schedule": "sigmoid"},
+    "quadratic": {"schedule": "quadratic"},
+}
+
+# Positional encoding variants
+POS_ENCODING_VARIANTS = {
+    "learnable": {"pos_encoding": "learnable"},
+    "sinusoidal": {"pos_encoding": "sinusoidal"},
+    "none": {"pos_encoding": "none"},
+}
+
+# Coordinate encoding variants
+COORD_ENCODING_VARIANTS = {
+    "linear": {"coord_encoding": "linear"},
+    "fourier": {"coord_encoding": "fourier"},
+}
+
+# Normalization variants
+NORM_VARIANTS = {
+    "layernorm": {"norm_type": "layernorm"},
+    "rmsnorm": {"norm_type": "rmsnorm"},
+}
+
+# Loss type variants
+LOSS_VARIANTS = {
+    "mse": {"loss_type": "mse"},
+    "huber": {"loss_type": "huber"},
 }
 
 
@@ -98,6 +125,10 @@ def create_config(
     precision: str,
     lr_variant: str = "lr_default",
     schedule: str = "cosine",
+    pos_encoding: str = "learnable",
+    coord_encoding: str = "linear",
+    norm_type: str = "layernorm",
+    loss_type: str = "mse",
     group: str = "overnight_v1",
 ) -> dict:
     """Create a single experiment configuration."""
@@ -119,13 +150,19 @@ def create_config(
         "type": "dit",
         "dropout": 0.0,
         "max_atoms": 64,
+        "pos_encoding": pos_encoding,
+        "coord_encoding": coord_encoding,
+        "norm_type": norm_type,
         **MODEL_SIZES[model_size],
     }
+
+    # Generative settings
+    config["generative"]["schedule"] = schedule
+    config["generative"]["loss_type"] = loss_type
 
     # Training settings
     config["training"].update(OPTIMIZERS[optimizer])
     config["training"].update(LR_VARIANTS[lr_variant])
-    config["generative"]["schedule"] = schedule
 
     # Precision
     config["mixed_precision"] = PRECISION[precision]["mixed_precision"]
@@ -210,8 +247,8 @@ def generate_schedule_ablation(output_dir: Path, group: str = "overnight_v1"):
     """Generate schedule ablation experiments."""
     experiments = []
 
-    for schedule in ["linear", "cosine"]:
-        name = f"medium_adamw_{schedule}"
+    for schedule in ["linear", "cosine", "sigmoid", "quadratic"]:
+        name = f"medium_adamw_sched_{schedule}"
         config = create_config(
             name=name,
             model_size="medium",
@@ -230,6 +267,96 @@ def generate_schedule_ablation(output_dir: Path, group: str = "overnight_v1"):
             "config": str(config_path),
         })
 
+        print(f"Created: {config_path}")
+
+    return experiments
+
+
+def generate_encoding_ablation(output_dir: Path, group: str = "overnight_v1"):
+    """Generate positional/coordinate encoding ablation experiments."""
+    experiments = []
+
+    # Positional encoding ablation
+    for pos_enc in ["learnable", "sinusoidal", "none"]:
+        name = f"medium_adamw_pos_{pos_enc}"
+        config = create_config(
+            name=name,
+            model_size="medium",
+            optimizer="adamw",
+            precision="fp32",
+            pos_encoding=pos_enc,
+            group=group,
+        )
+
+        config_path = output_dir / f"{name}.yaml"
+        with open(config_path, "w") as f:
+            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+        experiments.append({"name": name, "config": str(config_path)})
+        print(f"Created: {config_path}")
+
+    # Coordinate encoding ablation
+    for coord_enc in ["linear", "fourier"]:
+        name = f"medium_adamw_coord_{coord_enc}"
+        config = create_config(
+            name=name,
+            model_size="medium",
+            optimizer="adamw",
+            precision="fp32",
+            coord_encoding=coord_enc,
+            group=group,
+        )
+
+        config_path = output_dir / f"{name}.yaml"
+        with open(config_path, "w") as f:
+            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+        experiments.append({"name": name, "config": str(config_path)})
+        print(f"Created: {config_path}")
+
+    return experiments
+
+
+def generate_norm_loss_ablation(output_dir: Path, group: str = "overnight_v1"):
+    """Generate normalization and loss type ablation experiments."""
+    experiments = []
+
+    # Normalization ablation
+    for norm in ["layernorm", "rmsnorm"]:
+        name = f"medium_adamw_norm_{norm}"
+        config = create_config(
+            name=name,
+            model_size="medium",
+            optimizer="adamw",
+            precision="fp32",
+            norm_type=norm,
+            group=group,
+        )
+
+        config_path = output_dir / f"{name}.yaml"
+        with open(config_path, "w") as f:
+            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+        experiments.append({"name": name, "config": str(config_path)})
+        print(f"Created: {config_path}")
+
+    # Loss type ablation
+    for loss in ["mse", "huber"]:
+        name = f"medium_adamw_loss_{loss}"
+        config = create_config(
+            name=name,
+            model_size="medium",
+            optimizer="adamw",
+            precision="fp32",
+            loss_type=loss,
+            group=group,
+        )
+
+        config_path = output_dir / f"{name}.yaml"
+        with open(config_path, "w") as f:
+            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+        experiments.append({"name": name, "config": str(config_path)})
         print(f"Created: {config_path}")
 
     return experiments
@@ -256,8 +383,24 @@ def main():
     print(f"{'='*60}")
     schedule_experiments = generate_schedule_ablation(output_dir, group)
 
+    print(f"\n{'='*60}")
+    print("Generating Encoding Ablation (pos_encoding, coord_encoding)")
+    print(f"{'='*60}")
+    encoding_experiments = generate_encoding_ablation(output_dir, group)
+
+    print(f"\n{'='*60}")
+    print("Generating Normalization & Loss Ablation")
+    print(f"{'='*60}")
+    norm_loss_experiments = generate_norm_loss_ablation(output_dir, group)
+
     # Generate experiment list for runner
-    all_experiments = main_experiments + lr_experiments + schedule_experiments
+    all_experiments = (
+        main_experiments +
+        lr_experiments +
+        schedule_experiments +
+        encoding_experiments +
+        norm_loss_experiments
+    )
     experiments_list_path = output_dir / "experiment_list.yaml"
     with open(experiments_list_path, "w") as f:
         yaml.dump({

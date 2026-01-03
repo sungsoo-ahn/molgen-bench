@@ -24,14 +24,14 @@ training:
   warmup_steps: 1000
   weight_decay: 1.0e-05
   optimizer: adamw
-  learning_rate: 0.001
-  muon_lr: 0.05
+  learning_rate: 0.0003
+  muon_lr: 0.02
   muon_momentum: 0.95
 wandb:
   enabled: true
   entity: null
   project: molgen-bench
-  name: medium_adamw_lr_high
+  name: medium_adamw_norm_layernorm
   group: overnight_v1
   job_type: train
   tags:
@@ -43,7 +43,7 @@ wandb:
   - opt_adamw
   - prec_fp32
   - overnight_v1
-output_dir: data/experiments/overnight_v1/medium_adamw_lr_high
+output_dir: data/experiments/overnight_v1/medium_adamw_norm_layernorm
 architecture:
   type: dit
   dropout: 0.0

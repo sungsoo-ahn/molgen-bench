@@ -48,6 +48,9 @@ architecture:
   type: dit
   dropout: 0.0
   max_atoms: 64
+  pos_encoding: learnable
+  coord_encoding: linear
+  norm_type: layernorm
   hidden_dim: 384
   num_layers: 8
   num_heads: 12

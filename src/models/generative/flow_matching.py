@@ -94,12 +94,41 @@ class FlowMatching(nn.Module):
             d_sigma_t = -torch.ones_like(t)
 
         elif self.schedule == "cosine":
-            # Cosine schedule
+            # Cosine schedule - slower start and end
             alpha_t = 1 - torch.cos(t * math.pi / 2)
             sigma_t = torch.cos(t * math.pi / 2)
             # Derivatives
             d_alpha_t = (math.pi / 2) * torch.sin(t * math.pi / 2)
             d_sigma_t = -(math.pi / 2) * torch.sin(t * math.pi / 2)
+
+        elif self.schedule == "sigmoid":
+            # Sigmoid schedule - smooth S-curve transition
+            # Using logistic function centered at t=0.5
+            k = 10.0  # Steepness parameter
+            sigmoid = 1 / (1 + torch.exp(-k * (t - 0.5)))
+            # Normalize to [0, 1]
+            sigmoid_0 = 1 / (1 + math.exp(-k * (-0.5)))
+            sigmoid_1 = 1 / (1 + math.exp(-k * (0.5)))
+            alpha_t = (sigmoid - sigmoid_0) / (sigmoid_1 - sigmoid_0)
+            sigma_t = 1 - alpha_t
+            # Derivative of sigmoid
+            d_sigmoid = k * sigmoid * (1 - sigmoid)
+            d_alpha_t = d_sigmoid / (sigmoid_1 - sigmoid_0)
+            d_sigma_t = -d_alpha_t
+
+        elif self.schedule == "quadratic":
+            # Quadratic schedule - faster in the middle
+            alpha_t = t ** 2
+            sigma_t = 1 - t ** 2
+            d_alpha_t = 2 * t
+            d_sigma_t = -2 * t
+
+        elif self.schedule == "sqrt":
+            # Square root schedule - faster at the start
+            alpha_t = torch.sqrt(t + 1e-8)
+            sigma_t = 1 - torch.sqrt(t + 1e-8)
+            d_alpha_t = 0.5 / torch.sqrt(t + 1e-8)
+            d_sigma_t = -0.5 / torch.sqrt(t + 1e-8)
 
         else:
             raise ValueError(f"Unknown schedule: {self.schedule}")
