@@ -19,6 +19,14 @@ class MP20Dataset(Dataset):
     # HuggingFace dataset identifier
     HF_DATASET_ID = "chaitjo/MP20_ADiT"
 
+    # Default train/val/test split sizes (following ADiT splits)
+    # Reference: https://github.com/facebookresearch/all-atom-diffusion-transformer
+    SPLIT_INDICES = {
+        'train': (0, 27138),        # 27,138 samples
+        'val': (27138, 36184),      # 9,046 samples
+        'test': (36184, None)       # Remaining samples
+    }
+
     def __init__(
         self,
         data_dir: str,
@@ -78,9 +86,9 @@ class MP20Dataset(Dataset):
         print(f"Downloading MP20 dataset from HuggingFace ({self.HF_DATASET_ID})...")
         print("This may take a while on first run...")
 
-        # Download dataset from HuggingFace
+        # Download full dataset from HuggingFace (it only has 'train' split with all data)
         try:
-            hf_dataset = load_dataset(self.HF_DATASET_ID, split=self.split)
+            hf_dataset = load_dataset(self.HF_DATASET_ID, split='train')
         except Exception as e:
             print(f"Error loading from HuggingFace: {e}")
             print("Note: The dataset may not be publicly available yet.")
@@ -88,13 +96,22 @@ class MP20Dataset(Dataset):
             self._create_fallback_data()
             return
 
-        print(f"Processing {len(hf_dataset)} structures for {self.split} split...")
+        print(f"Loaded {len(hf_dataset)} total structures from HuggingFace")
 
-        # Process structures
+        # Get split indices
+        start_idx, end_idx = self.SPLIT_INDICES[self.split]
+        if end_idx is None:
+            end_idx = len(hf_dataset)
+        end_idx = min(end_idx, len(hf_dataset))
+
+        print(f"Processing {end_idx - start_idx} structures for {self.split} split (indices {start_idx}-{end_idx})...")
+
+        # Process structures for this split
         data = []
         errors = 0
-        for idx, sample in enumerate(tqdm(hf_dataset, desc=f"Processing {self.split}")):
+        for idx in tqdm(range(start_idx, end_idx), desc=f"Processing {self.split}"):
             try:
+                sample = hf_dataset[idx]
                 # Parse CIF string to get structure
                 cif_str = sample['cif']
                 structure = Structure.from_str(cif_str, fmt='cif')
@@ -120,7 +137,7 @@ class MP20Dataset(Dataset):
                     "properties": properties,
                     "lattice": lattice,
                     "material_id": sample.get('material_id', f'sample_{idx}'),
-                    "id": idx
+                    "id": idx  # Original index in full dataset
                 })
 
             except Exception as e:
@@ -130,7 +147,7 @@ class MP20Dataset(Dataset):
                 continue
 
         if errors > 0:
-            print(f"\nWarning: Failed to process {errors}/{len(hf_dataset)} samples")
+            print(f"\nWarning: Failed to process {errors}/{end_idx - start_idx} samples")
 
         # Save processed data
         with open(self.processed_file, "wb") as f:
@@ -145,8 +162,13 @@ class MP20Dataset(Dataset):
         """
         print(f"Creating fallback {self.split} data...")
 
-        # Small dataset for testing
-        split_sizes = {"train": 100, "val": 20, "test": 20}
+        # Small dataset for testing - use proportional sizes matching real splits
+        total_fallback = 200
+        split_sizes = {
+            "train": int(total_fallback * 27138 / 45229),  # ~120 samples
+            "val": int(total_fallback * 9046 / 45229),      # ~40 samples
+            "test": int(total_fallback * 9045 / 45229)       # ~40 samples
+        }
         n_structures = split_sizes.get(self.split, 100)
 
         data = []

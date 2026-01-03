@@ -6,16 +6,16 @@ This directory contains scripts to download and process the QM9 and MP20 dataset
 
 ### QM9
 - **Source**: HuggingFace (`chaitjo/QM9_ADiT`)
-- **Size**: ~134k small organic molecules
+- **Size**: ~130k small organic molecules (130,831 total)
 - **Properties**: Quantum chemical properties (dipole moment, HOMO-LUMO gap, etc.)
-- **Splits**: train (100k), val (10k), test (~31k)
+- **Splits**: train (100k), val (18k), test (12.8k)
 - **Download size**: 340MB (pre-processed PyTorch Geometric format)
 
 ### MP20
 - **Source**: HuggingFace (`chaitjo/MP20_ADiT`)
-- **Size**: ~20k inorganic crystal structures
-- **Properties**: Formation energy, band gap, density
-- **Splits**: train (80%), val (10%), test (10%)
+- **Size**: ~45k inorganic crystal structures (45,229 total)
+- **Properties**: Formation energy, band gap, energy above hull
+- **Splits**: train (27.1k), val (9k), test (9k)
 
 ## Usage
 

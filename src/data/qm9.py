@@ -39,11 +39,12 @@ class QM9Dataset(Dataset):
         'U0', 'U', 'H', 'G', 'Cv'
     ]
 
-    # Default train/val/test split sizes (following standard QM9 splits)
+    # Default train/val/test split sizes (following ADiT splits)
+    # Reference: https://github.com/facebookresearch/all-atom-diffusion-transformer
     SPLIT_INDICES = {
-        'train': (0, 100000),
-        'val': (100000, 110000),
-        'test': (110000, 130831)
+        'train': (0, 100000),       # 100,000 samples
+        'val': (100000, 118000),    # 18,000 samples
+        'test': (118000, 130831)    # 12,831 samples
     }
 
     def __init__(
@@ -122,6 +123,26 @@ class QM9Dataset(Dataset):
         print(f"Loading processed QM9 data...")
         # Note: weights_only=False is required for PyTorch Geometric Data objects
         # The file contains: (data_dict, slices_dict, Data_class)
+        # We need to allow torch_geometric imports even though we don't have it installed
+        import sys
+        from types import ModuleType
+
+        # Create a mock torch_geometric module to allow unpickling
+        if 'torch_geometric' not in sys.modules:
+            torch_geometric = ModuleType('torch_geometric')
+            torch_geometric.data = ModuleType('torch_geometric.data')
+            torch_geometric.data.data = ModuleType('torch_geometric.data.data')
+
+            # Create a minimal Data class
+            class Data:
+                pass
+            torch_geometric.data.data.Data = Data
+            torch_geometric.data.Data = Data
+
+            sys.modules['torch_geometric'] = torch_geometric
+            sys.modules['torch_geometric.data'] = torch_geometric.data
+            sys.modules['torch_geometric.data.data'] = torch_geometric.data.data
+
         data_dict, slices_dict, _ = torch.load(processed_file, weights_only=False)
 
         print(f"Loaded batched QM9 data with {len(slices_dict['y']) - 1} molecules")
