@@ -53,7 +53,9 @@ training:
   eval_samples: 100     # Number of molecules to generate for evaluation
   eval_steps: 100       # ODE integration steps for generation
 
-  log_interval: 100
+  # Logging settings
+  log_interval: 100             # Log detailed metrics every N steps
+  log_detailed_metrics: true    # Enable comprehensive diagnostic metrics
 
 # Hardware
 device: cuda

@@ -197,9 +197,75 @@ class FlowMatching(nn.Module):
         else:
             raise ValueError(f"Unknown loss type: {self.loss_type}")
 
+        # Compute detailed metrics
+        with torch.no_grad():
+            # Per-component losses (x, y, z)
+            per_component_mse = ((predicted_velocity - target_velocity) ** 2).mean(dim=0)
+
+            # Prediction statistics
+            pred_mean = predicted_velocity.mean()
+            pred_std = predicted_velocity.std()
+            pred_abs_max = predicted_velocity.abs().max()
+
+            # Target statistics
+            target_mean = target_velocity.mean()
+            target_std = target_velocity.std()
+            target_abs_max = target_velocity.abs().max()
+
+            # Per-time-bucket losses (early: 0-0.33, mid: 0.33-0.66, late: 0.66-1.0)
+            if batch_idx is not None:
+                t_per_atom = t[batch_idx]
+            else:
+                t_per_atom = t.expand(positions.size(0))
+
+            per_atom_loss = ((predicted_velocity - target_velocity) ** 2).mean(dim=-1)
+
+            early_mask = t_per_atom < 0.33
+            mid_mask = (t_per_atom >= 0.33) & (t_per_atom < 0.66)
+            late_mask = t_per_atom >= 0.66
+
+            loss_early = per_atom_loss[early_mask].mean() if early_mask.any() else torch.tensor(0.0)
+            loss_mid = per_atom_loss[mid_mask].mean() if mid_mask.any() else torch.tensor(0.0)
+            loss_late = per_atom_loss[late_mask].mean() if late_mask.any() else torch.tensor(0.0)
+
+            # Error magnitude statistics
+            error = predicted_velocity - target_velocity
+            error_norm = torch.norm(error, dim=-1)
+            error_mean = error_norm.mean()
+            error_std = error_norm.std()
+            error_max = error_norm.max()
+
+            # Cosine similarity between prediction and target
+            cos_sim = F.cosine_similarity(
+                predicted_velocity.view(-1, 3),
+                target_velocity.view(-1, 3),
+                dim=-1
+            ).mean()
+
         info = {
             "loss": loss.item(),
             "mean_t": t.mean().item(),
+            # Per-component losses
+            "loss_x": per_component_mse[0].item(),
+            "loss_y": per_component_mse[1].item(),
+            "loss_z": per_component_mse[2].item(),
+            # Time-bucket losses
+            "loss_early": loss_early.item(),
+            "loss_mid": loss_mid.item(),
+            "loss_late": loss_late.item(),
+            # Prediction statistics
+            "pred_mean": pred_mean.item(),
+            "pred_std": pred_std.item(),
+            "pred_abs_max": pred_abs_max.item(),
+            # Target statistics
+            "target_mean": target_mean.item(),
+            "target_std": target_std.item(),
+            "target_abs_max": target_abs_max.item(),
+            # Error statistics
+            "error_mean": error_mean.item(),
+            "error_std": error_std.item(),
+            "error_max": error_max.item(),
+            "cosine_similarity": cos_sim.item(),
         }
 
         return loss, info

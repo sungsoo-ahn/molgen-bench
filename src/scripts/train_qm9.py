@@ -10,12 +10,285 @@ import numpy as np
 from torch.utils.data import DataLoader
 from pathlib import Path
 from tqdm import tqdm
+from collections import defaultdict
 import wandb
 
 from src.data import QM9Dataset, collate_molecular_data
 from src.models.architectures import DiT
 from src.models.generative import FlowMatching
 from src.evaluation.sample_quality import compute_atom_stability, compute_molecule_stability
+
+
+def compute_gradient_metrics(model: torch.nn.Module) -> dict:
+    """Compute gradient statistics for model parameters.
+
+    Args:
+        model: The model with computed gradients
+
+    Returns:
+        dict with gradient metrics
+    """
+    metrics = {}
+
+    # Total gradient norm
+    total_norm = 0.0
+    num_params_with_grad = 0
+
+    # Per-component gradient norms
+    backbone_norm = 0.0
+    velocity_head_norm = 0.0
+
+    # Gradient statistics
+    all_grads = []
+
+    for name, param in model.named_parameters():
+        if param.grad is not None:
+            param_norm = param.grad.data.norm(2).item()
+            total_norm += param_norm ** 2
+            num_params_with_grad += 1
+
+            # Collect for statistics
+            all_grads.append(param.grad.data.flatten())
+
+            # Component-wise
+            if 'backbone' in name:
+                backbone_norm += param_norm ** 2
+            elif 'velocity_head' in name:
+                velocity_head_norm += param_norm ** 2
+
+    total_norm = total_norm ** 0.5
+    backbone_norm = backbone_norm ** 0.5
+    velocity_head_norm = velocity_head_norm ** 0.5
+
+    metrics["grad/total_norm"] = total_norm
+    metrics["grad/backbone_norm"] = backbone_norm
+    metrics["grad/velocity_head_norm"] = velocity_head_norm
+
+    # Gradient statistics
+    if all_grads:
+        all_grads = torch.cat(all_grads)
+        metrics["grad/mean"] = all_grads.mean().item()
+        metrics["grad/std"] = all_grads.std().item()
+        metrics["grad/abs_max"] = all_grads.abs().max().item()
+        metrics["grad/num_zeros"] = (all_grads == 0).sum().item()
+        metrics["grad/sparsity"] = (all_grads == 0).float().mean().item()
+
+    return metrics
+
+
+def compute_weight_metrics(model: torch.nn.Module) -> dict:
+    """Compute weight statistics for model parameters.
+
+    Args:
+        model: The model
+
+    Returns:
+        dict with weight metrics
+    """
+    metrics = {}
+
+    # Per-layer weight norms
+    total_norm = 0.0
+    backbone_norm = 0.0
+    velocity_head_norm = 0.0
+
+    # Weight statistics
+    all_weights = []
+
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            param_norm = param.data.norm(2).item()
+            total_norm += param_norm ** 2
+            all_weights.append(param.data.flatten())
+
+            if 'backbone' in name:
+                backbone_norm += param_norm ** 2
+            elif 'velocity_head' in name:
+                velocity_head_norm += param_norm ** 2
+
+    total_norm = total_norm ** 0.5
+    backbone_norm = backbone_norm ** 0.5
+    velocity_head_norm = velocity_head_norm ** 0.5
+
+    metrics["weight/total_norm"] = total_norm
+    metrics["weight/backbone_norm"] = backbone_norm
+    metrics["weight/velocity_head_norm"] = velocity_head_norm
+
+    # Weight statistics
+    if all_weights:
+        all_weights = torch.cat(all_weights)
+        metrics["weight/mean"] = all_weights.mean().item()
+        metrics["weight/std"] = all_weights.std().item()
+        metrics["weight/abs_max"] = all_weights.abs().max().item()
+
+    return metrics
+
+
+def compute_ema_diff_metrics(model: torch.nn.Module, ema) -> dict:
+    """Compute difference between model weights and EMA weights.
+
+    Args:
+        model: The model
+        ema: EMA object
+
+    Returns:
+        dict with EMA difference metrics
+    """
+    if ema is None:
+        return {}
+
+    metrics = {}
+    total_diff = 0.0
+    num_params = 0
+
+    for name, param in model.named_parameters():
+        if param.requires_grad and name in ema.shadow:
+            diff = (param.data - ema.shadow[name]).norm(2).item()
+            total_diff += diff ** 2
+            num_params += 1
+
+    metrics["ema/weight_diff_norm"] = (total_diff ** 0.5) if num_params > 0 else 0.0
+
+    return metrics
+
+
+def compute_data_metrics(batch, atom_type_map: dict) -> dict:
+    """Compute statistics about the data batch.
+
+    Args:
+        batch: Data batch
+        atom_type_map: Mapping from atomic numbers to indices
+
+    Returns:
+        dict with data metrics
+    """
+    metrics = {}
+
+    positions = batch.positions
+    atom_types = batch.atom_types
+    batch_idx = batch.batch_idx
+
+    # Position statistics
+    metrics["data/pos_mean"] = positions.mean().item()
+    metrics["data/pos_std"] = positions.std().item()
+    metrics["data/pos_abs_max"] = positions.abs().max().item()
+
+    # Per-dimension statistics
+    metrics["data/pos_x_std"] = positions[:, 0].std().item()
+    metrics["data/pos_y_std"] = positions[:, 1].std().item()
+    metrics["data/pos_z_std"] = positions[:, 2].std().item()
+
+    # Molecule size statistics
+    num_graphs = batch_idx.max().item() + 1
+    mol_sizes = torch.bincount(batch_idx)
+    metrics["data/mol_size_mean"] = mol_sizes.float().mean().item()
+    metrics["data/mol_size_std"] = mol_sizes.float().std().item()
+    metrics["data/mol_size_min"] = mol_sizes.min().item()
+    metrics["data/mol_size_max"] = mol_sizes.max().item()
+    metrics["data/num_molecules"] = num_graphs
+
+    # Atom type distribution
+    atom_counts = torch.bincount(atom_types, minlength=10)
+    index_to_name = {1: 'H', 6: 'C', 7: 'N', 8: 'O', 9: 'F'}
+    total_atoms = len(atom_types)
+    for atomic_num, idx in atom_type_map.items():
+        name = index_to_name.get(atomic_num, str(atomic_num))
+        count = atom_counts[atomic_num].item()
+        metrics[f"data/frac_{name}"] = count / total_atoms if total_atoms > 0 else 0
+
+    return metrics
+
+
+def compute_model_internals(model: torch.nn.Module) -> dict:
+    """Compute internal model statistics (adaLN, attention, etc).
+
+    Args:
+        model: The model (expected to be FlowMatching with DiT backbone)
+
+    Returns:
+        dict with model internal metrics
+    """
+    metrics = {}
+
+    backbone = model.backbone
+
+    # Check if DiT backbone
+    if not hasattr(backbone, 'blocks'):
+        return metrics
+
+    # Analyze adaLN modulation weights
+    adaLN_norms = []
+    for i, block in enumerate(backbone.blocks):
+        if hasattr(block, 'adaLN_modulation'):
+            # Get the linear layer weight
+            linear = block.adaLN_modulation[1]  # nn.Sequential: [SiLU, Linear]
+            weight_norm = linear.weight.data.norm(2).item()
+            bias_norm = linear.bias.data.norm(2).item() if linear.bias is not None else 0
+            adaLN_norms.append(weight_norm)
+            metrics[f"model/block{i}_adaLN_weight_norm"] = weight_norm
+            metrics[f"model/block{i}_adaLN_bias_norm"] = bias_norm
+
+    if adaLN_norms:
+        metrics["model/adaLN_weight_norm_mean"] = np.mean(adaLN_norms)
+        metrics["model/adaLN_weight_norm_std"] = np.std(adaLN_norms)
+
+    # Attention weight norms
+    attn_norms = []
+    for i, block in enumerate(backbone.blocks):
+        if hasattr(block, 'attn'):
+            in_proj_norm = block.attn.in_proj_weight.data.norm(2).item()
+            out_proj_norm = block.attn.out_proj.weight.data.norm(2).item()
+            attn_norms.append(in_proj_norm)
+            metrics[f"model/block{i}_attn_in_proj_norm"] = in_proj_norm
+            metrics[f"model/block{i}_attn_out_proj_norm"] = out_proj_norm
+
+    if attn_norms:
+        metrics["model/attn_in_proj_norm_mean"] = np.mean(attn_norms)
+
+    # MLP weight norms
+    mlp_norms = []
+    for i, block in enumerate(backbone.blocks):
+        if hasattr(block, 'mlp'):
+            fc1_norm = block.mlp.fc1.weight.data.norm(2).item()
+            fc2_norm = block.mlp.fc2.weight.data.norm(2).item()
+            mlp_norms.append(fc1_norm)
+            metrics[f"model/block{i}_mlp_fc1_norm"] = fc1_norm
+            metrics[f"model/block{i}_mlp_fc2_norm"] = fc2_norm
+
+    if mlp_norms:
+        metrics["model/mlp_fc1_norm_mean"] = np.mean(mlp_norms)
+
+    # Timestep embedding weight norm
+    if hasattr(backbone, 'time_embed'):
+        time_mlp = backbone.time_embed.mlp
+        metrics["model/time_embed_fc1_norm"] = time_mlp[0].weight.data.norm(2).item()
+        metrics["model/time_embed_fc2_norm"] = time_mlp[2].weight.data.norm(2).item()
+
+    # Atom embedding statistics
+    if hasattr(backbone, 'atom_embedding'):
+        emb_weight = backbone.atom_embedding.weight.data
+        metrics["model/atom_emb_norm"] = emb_weight.norm(2).item()
+        metrics["model/atom_emb_std"] = emb_weight.std().item()
+
+    return metrics
+
+
+class MetricsAccumulator:
+    """Accumulator for averaging metrics over batches."""
+
+    def __init__(self):
+        self.metrics = defaultdict(list)
+
+    def add(self, metrics_dict: dict):
+        for key, value in metrics_dict.items():
+            if isinstance(value, (int, float)):
+                self.metrics[key].append(value)
+
+    def get_averages(self) -> dict:
+        return {key: np.mean(values) for key, values in self.metrics.items()}
+
+    def reset(self):
+        self.metrics = defaultdict(list)
 
 
 class EMA:
@@ -266,11 +539,18 @@ def main(args):
     print("\nStarting training...")
     best_val_loss = float('inf')
 
+    # Logging configuration
+    log_interval = config["training"].get("log_interval", 100)
+    log_detailed_metrics = config["training"].get("log_detailed_metrics", True)
+
     for epoch in range(config["training"]["epochs"]):
         # Training
         model.train()
         total_train_loss = 0.0
         num_train_batches = 0
+
+        # Metrics accumulator for detailed logging
+        train_metrics = MetricsAccumulator()
 
         pbar = tqdm(train_loader, desc=f"Epoch {epoch} [train]")
         for batch in pbar:
@@ -291,12 +571,31 @@ def main(args):
             optimizer.zero_grad()
             loss.backward()
 
+            # Compute gradient metrics before clipping
+            if log_detailed_metrics and global_step % log_interval == 0:
+                grad_metrics_pre_clip = compute_gradient_metrics(model)
+                train_metrics.add({f"{k}_pre_clip": v for k, v in grad_metrics_pre_clip.items()})
+
             # Gradient clipping
+            grad_norm_clipped = None
             if config["training"]["gradient_clip"] > 0:
-                torch.nn.utils.clip_grad_norm_(
+                grad_norm_clipped = torch.nn.utils.clip_grad_norm_(
                     model.parameters(),
                     config["training"]["gradient_clip"]
                 )
+
+            # Compute gradient metrics after clipping
+            if log_detailed_metrics and global_step % log_interval == 0:
+                grad_metrics_post_clip = compute_gradient_metrics(model)
+                train_metrics.add(grad_metrics_post_clip)
+
+                # Data metrics
+                data_metrics = compute_data_metrics(batch, atom_type_map)
+                train_metrics.add(data_metrics)
+
+                # Loss component metrics from info
+                for key, value in info.items():
+                    train_metrics.add({f"loss/{key}": value})
 
             # Apply warmup learning rate
             if warmup_steps > 0:
@@ -315,7 +614,35 @@ def main(args):
             num_train_batches += 1
 
             current_lr = optimizer.param_groups[0]['lr']
-            pbar.set_postfix({"loss": f"{loss.item():.4f}", "lr": f"{current_lr:.2e}"})
+            pbar.set_postfix({
+                "loss": f"{loss.item():.4f}",
+                "lr": f"{current_lr:.2e}",
+                "cos_sim": f"{info.get('cosine_similarity', 0):.3f}"
+            })
+
+            # Detailed per-step logging
+            if wandb.run is not None and global_step % log_interval == 0:
+                step_metrics = {
+                    "train/step_loss": loss.item(),
+                    "train/lr": current_lr,
+                    "train/global_step": global_step,
+                }
+
+                # Add flow matching specific metrics
+                step_metrics["train/loss_early"] = info.get("loss_early", 0)
+                step_metrics["train/loss_mid"] = info.get("loss_mid", 0)
+                step_metrics["train/loss_late"] = info.get("loss_late", 0)
+                step_metrics["train/cosine_similarity"] = info.get("cosine_similarity", 0)
+                step_metrics["train/pred_std"] = info.get("pred_std", 0)
+                step_metrics["train/target_std"] = info.get("target_std", 0)
+                step_metrics["train/error_mean"] = info.get("error_mean", 0)
+
+                # Gradient norm
+                if grad_norm_clipped is not None:
+                    step_metrics["train/grad_norm_before_clip"] = grad_metrics_pre_clip.get("grad/total_norm", 0)
+                    step_metrics["train/grad_norm_after_clip"] = grad_norm_clipped.item() if torch.is_tensor(grad_norm_clipped) else grad_norm_clipped
+
+                wandb.log(step_metrics, step=global_step)
 
         avg_train_loss = total_train_loss / num_train_batches
 
@@ -354,6 +681,20 @@ def main(args):
 
         print(f"Epoch {epoch}: train_loss = {avg_train_loss:.4f}, val_loss = {avg_val_loss:.4f}")
 
+        # Compute epoch-level detailed metrics
+        if log_detailed_metrics:
+            # Weight metrics
+            weight_metrics = compute_weight_metrics(model)
+
+            # EMA difference metrics
+            ema_metrics = compute_ema_diff_metrics(model, ema)
+
+            # Model internal metrics (adaLN, attention, etc)
+            model_internal_metrics = compute_model_internals(model)
+
+            # Get averaged training metrics from accumulator
+            avg_train_metrics = train_metrics.get_averages()
+
         # Evaluate generation quality periodically
         eval_every = config["training"].get("eval_every", 10)
         if epoch % eval_every == 0 or epoch == config["training"]["epochs"] - 1:
@@ -387,13 +728,37 @@ def main(args):
         # Log metrics to WandB
         if wandb.run is not None:
             current_lr = optimizer.param_groups[0]['lr']
-            wandb.log({
+            epoch_metrics = {
                 "epoch": epoch,
                 "train/loss": avg_train_loss,
                 "val/loss": avg_val_loss,
                 "train/lr": current_lr,
-                "train/global_step": global_step
-            })
+                "train/global_step": global_step,
+            }
+
+            # Add detailed metrics if enabled
+            if log_detailed_metrics:
+                # Weight metrics
+                for key, value in weight_metrics.items():
+                    epoch_metrics[key] = value
+
+                # EMA metrics
+                for key, value in ema_metrics.items():
+                    epoch_metrics[key] = value
+
+                # Model internal metrics
+                for key, value in model_internal_metrics.items():
+                    epoch_metrics[key] = value
+
+                # Averaged training metrics (loss components, gradients, data stats)
+                for key, value in avg_train_metrics.items():
+                    # Prefix with 'train_avg/' if not already prefixed
+                    if not key.startswith(('train/', 'val/', 'gen/', 'weight/', 'ema/', 'model/', 'grad/', 'data/', 'loss/')):
+                        epoch_metrics[f"train_avg/{key}"] = value
+                    else:
+                        epoch_metrics[key] = value
+
+            wandb.log(epoch_metrics)
 
         # Save best model (save EMA weights)
         if avg_val_loss < best_val_loss:
