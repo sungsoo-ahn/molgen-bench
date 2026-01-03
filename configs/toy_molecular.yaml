@@ -16,7 +16,7 @@ wandb:
 # Data
 data:
   dataset_type: toy_molecular
-  shape_type: sphere  # sphere, cube, spiral, cluster, tetrahedron, mixed
+  shape_type: circle  # 2D: circle, star, grid | 3D: sphere, cube, spiral, cluster, tetrahedron | mixed
   num_samples: 2000
   num_atoms_range: [10, 30]  # min and max atoms per molecule
   noise: 0.02
